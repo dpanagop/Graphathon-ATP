@@ -1,0 +1,99 @@
+//Create Beneficiary nodes
+create constraint if not exists for (b:Beneficiary) require (b.id) is node key;
+LOAD CSV WITH HEADERS FROM'file:///Train_Beneficiarydata_clean.csv' AS row 
+FIELDTERMINATOR ';'
+WITH row.BeneID AS b_id, row.DOB AS dob, row.NoOfMonths_PartACov AS NOM_AC, row.NoOfMonths_PartBCov AS NOM_BC, row.IPAnnualReimbursementAmt AS IPAR, row.IPAnnualDeductibleAmt AS IPAD, row.OPAnnualReimbursementAmt AS OPAR, row.OPAnnualDeductibleAmt AS OPAD, row.Ailments AS ail
+MERGE (b:Beneficiary {id: b_id})
+    set b.dateOfBirth = dob,
+        b.monthsACoverage = NOM_AC,
+        b.monthsBCoverage = NOM_BC,
+        b.IPAnnualReimbursement = IPAR,
+        b.IPAnnualDeductible = IPAD,
+        b.OPAnnualReimbursement = OPAR,
+        b.OPAnnualDeductible = OPAD,
+        b.ailments = split(replace(replace(replace(ail, '[', ''), ']', ''), ' ', ''), ',')
+RETURN count(*) as nodes_created;
+
+//Create Ailment nodes and connect to patients
+MATCH (b:Beneficiary)
+UNWIND b.ailments AS ailment
+WITH  ailment, collect(b) AS beneficiaries
+MERGE (a:Ailment {condition:ailment})
+WITH a, beneficiaries
+UNWIND beneficiaries AS b
+WITH a,b
+MERGE (b)-[:has_ailment]->(a);
+MATCH (b:Beneficiary)
+SET b.ailments = null;
+
+//Create inpatient nodes
+
+//Create Claim nodes
+create constraint if not exists for (c:Claim) require (c.id) is node key;
+LOAD CSV WITH HEADERS FROM'file:///Train_Inpatientdata.csv' AS row 
+FIELDTERMINATOR ','
+WITH row.ClaimID AS c_id, row.ClaimStartDt AS start_date, row.ClaimEndDt AS end_date, row.AdmissionDt AS adminDt, row.DischargeDt AS disDt, row.DeductibleAmtPaid AS deducPaid, row.DiagnosisGroupCode AS diagGroup, row.ClmDiagnosisCode_1 AS clm1, row.ClmDiagnosisCode_2 AS clm2, row.InscClaimAmtReimbursed AS reimbursed
+MERGE (c:Claim {id: c_id})
+    set c.startDate = start_date,
+        c.endDate = end_date,
+        c.admissionDate = adminDt,
+        c.dischargeDate = disDt,
+        c.deductibleAmountPaid = deducPaid,
+        c.amountReimbursed = reimbursed,
+        c.diagnosisGroupCode = diagGroup,
+        c.claimmDiagnosisCode1 = clm1,
+        c.claimDiagnosisCode2 = clm2
+RETURN count(*) as nodes_created;
+
+//Create Physician nodes
+create constraint if not exists for (p:Physician) require (p.id) is node key;
+LOAD CSV WITH HEADERS FROM'file:///Train_Inpatientdata.csv' AS row 
+FIELDTERMINATOR ','
+WITH row.AttendingPhysician AS p_id
+MERGE (p:Physician {id: p_id})
+RETURN count(*) as nodes_created;
+
+//Create Provider nodes
+create constraint if not exists for (p:Provider) require (p.id) is node key;
+LOAD CSV WITH HEADERS FROM'file:///Train_Inpatientdata.csv' AS row 
+FIELDTERMINATOR ','
+WITH row.Provider AS p_id
+MERGE (p:Provider {id: p_id})
+RETURN count(*) as nodes_created;
+
+//Create made_claim relationship
+LOAD CSV WITH HEADERS FROM'file:///Train_Inpatientdata.csv' AS row 
+FIELDTERMINATOR ','
+      WITH row.BeneID AS b_id, row.ClaimID AS c_id
+match (b:Beneficiary), (c:Claim)
+    where b.id = b_id and c.id = c_id
+    merge (c)<-[:made_claim]-(b)
+    return count(*) as rels_created;
+
+//Create associated_physician relationship
+LOAD CSV WITH HEADERS FROM'file:///Train_Inpatientdata.csv' AS row 
+FIELDTERMINATOR ','
+      WITH row.ClaimID AS c_id, row.AttendingPhysician AS p_id
+match (c:Claim), (p:Physician)
+    where c.id = c_id and p.id = p_id
+    merge (p)<-[:associated_physician]-(c)
+    return count(*) as rels_created;
+
+//Create associated_physician relationship
+LOAD CSV WITH HEADERS FROM'file:///Train_Inpatientdata.csv' AS row 
+FIELDTERMINATOR ','
+      WITH row.ClaimID AS c_id, row.Provider AS p_id
+match (c:Claim), (p:Provider)
+    where c.id = c_id and p.id = p_id
+    merge (p)<-[:has_provider]-(c)
+    return count(*) as rels_created;
+
+//Add fraud flags
+//Create associated_physician relationship
+LOAD CSV WITH HEADERS FROM'file:///Train.csv' AS row 
+FIELDTERMINATOR ','
+      WITH row.PotentialFraud AS flag, row.Provider AS p_id
+match (p:Provider)
+    where p.id = p_id
+    set p.potentialFraud = flag
+    return count(*) as properties_set;
